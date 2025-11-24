@@ -599,7 +599,9 @@
 
         // Vista de un solo mes
         const MonthCalendar = ({ monthData, attendance, holidays, vacations, updateAttendanceStatus, MIDNIGHT_BLUE_LIGHTER, MIDNIGHT_BLUE_DARKER, MIDNIGHT_BLUE }) => {
-            const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Jue', 'Sáb'];
+            // CORREGIDO: Eliminada la duplicación de 'Jue' (Jueves) para evitar la advertencia de clave duplicada de React.
+            // Ahora solo hay 7 días para el grid de 7 columnas.
+            const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
             const initialOffset = monthData.startDayOfWeek;
             const calendarCells = Array(initialOffset).fill(null).concat(monthData.days);
@@ -610,6 +612,7 @@
                     
                     {/* Encabezados de Días de la Semana */}
                     <div className="grid grid-cols-7 gap-1 text-center font-semibold text-xs text-gray-400 mb-1">
+                        {/* Se utiliza el nombre del día como clave, ahora son únicos. */}
                         {daysOfWeek.map(day => <div key={day}>{day}</div>)}
                     </div>
 
