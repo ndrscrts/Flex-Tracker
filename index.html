@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flex Tracker - Local PWA</title>
+    <title>Flex Tracker - Histórico PWA</title>
     <!-- Configuración para PWA en iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -67,7 +67,7 @@
             { id: 4, name: 'T4', months: [10, 11, 0] }, // Nov (10), Dec (11), Jan (0)
         ];
 
-        // Helper para obtener detalles del trimestre actual
+        // Helper para obtener detalles del trimestre de CUALQUIER fecha
         const getQuarterDetails = (date) => {
             const month = date.getMonth(); // 0 (Jan) to 11 (Dec)
             let year = date.getFullYear();
@@ -78,10 +78,12 @@
                 currentQuarter = QUARTERS.find(q => q.id === 4);
             } else if (month === 0) { // Jan
                 currentQuarter = QUARTERS.find(q => q.id === 4);
+                // Si es Enero, el trimestre 4 pertenece al año anterior.
                 year = year - 1; 
             }
 
             if (!currentQuarter) {
+                // Caso por defecto, debería ser T1 si no se encuentra (e.g. Febrero)
                 currentQuarter = QUARTERS.find(q => q.id === 1);
             }
 
@@ -91,17 +93,13 @@
             let endYear = year;
 
             if (currentQuarter.id === 4) {
-                if (month === 0) {
-                    startYear = year;
-                    endYear = year + 1;
-                } else {
-                    startYear = year;
-                    endYear = year + 1;
-                }
+                // T4 siempre empieza en Nov de un año y termina en Ene del siguiente
+                startYear = year;
+                endYear = year + 1;
             }
 
             const startDate = new Date(startYear, startMonth, 1);
-            const endDate = new Date(endYear, endMonth + 1, 0);
+            const endDate = new Date(endYear, endMonth + 1, 0); // Ultimo día del mes
 
             return {
                 id: currentQuarter.id,
@@ -146,46 +144,51 @@
                 <circle cx="50" cy="50" r="10" fill="white" />
             </svg>
         );
-
+        
+        const MIDNIGHT_BLUE = '#191970';
+        const MIDNIGHT_BLUE_LIGHTER = 'rgba(25,25,112,0.7)';
+        const MIDNIGHT_BLUE_DARKER = 'rgba(25,25,112,0.9)';
 
         // Componente principal de la aplicación
         const App = () => {
             const [loading, setLoading] = useState(true);
             const [error, setError] = useState('');
+            
+            // --- NUEVO ESTADO: Controla qué trimestre se está viendo ---
+            const [dateInView, setDateInView] = useState(new Date());
 
             // Estado de Asistencia y Configuraciones
             const [attendance, setAttendance] = useState({}); // { 'YYYY-MM-DD': 'Attended' | 'Not_Attended' }
             const [holidays, setHolidays] = useState([]); // Array de fechas YYYY-MM-DD
             const [vacations, setVacations] = useState([]); // Array de fechas YYYY-MM-DD
 
-            // Obtener detalles del trimestre actual
+            // Fechas fijas
             const today = useMemo(() => new Date(), []);
             const startOfToday = useMemo(() => {
                 const d = new Date(today);
                 d.setHours(0, 0, 0, 0);
                 return d;
             }, [today]);
-            const quarterDetails = useMemo(() => getQuarterDetails(today), [today]);
+
+            // Obtener detalles del trimestre de la fecha en vista
+            const quarterDetails = useMemo(() => getQuarterDetails(dateInView), [dateInView]);
             
-            const MIDNIGHT_BLUE = '#191970';
-            const MIDNIGHT_BLUE_LIGHTER = 'rgba(25,25,112,0.7)';
-            const MIDNIGHT_BLUE_DARKER = 'rgba(25,25,112,0.9)';
-            
-            // Llaves de almacenamiento local específicas para el trimestre
+            // Llaves de almacenamiento local específicas para el trimestre VISTO
             const quarterKey = `Q${quarterDetails.id}-${quarterDetails.startYear}`;
             const ATTENDANCE_KEY = `flex_tracker_attendance_${quarterKey}`;
             const HOLIDAYS_KEY = `flex_tracker_holidays_${quarterKey}`;
             const VACATIONS_KEY = `flex_tracker_vacations_${quarterKey}`;
 
 
-            // --- Carga Inicial de Datos (Desde localStorage) ---
+            // --- Carga Inicial de Datos (Desde localStorage - Dependiente de quarterKey) ---
             useEffect(() => {
-                // Cargar asistencia y configuraciones del trimestre actual
+                setLoading(true);
+                // Cargar asistencia y configuraciones del trimestre VISTO
                 setAttendance(loadState(ATTENDANCE_KEY, {}));
                 setHolidays(loadState(HOLIDAYS_KEY, []));
                 setVacations(loadState(VACATIONS_KEY, []));
-                setLoading(false); // Listo para mostrar la UI
-            }, [quarterKey]);
+                setLoading(false); 
+            }, [quarterKey]); // Se recarga cada vez que el trimestre VISTO cambia
 
             // --- Persistencia de Datos (Hacia localStorage) ---
             useEffect(() => {
@@ -201,7 +204,7 @@
             }, [vacations, VACATIONS_KEY]);
 
 
-            // Función para obtener todos los días del trimestre
+            // Función para obtener todos los días del trimestre VISTO
             const getQuarterDays = useCallback(() => {
                 const days = [];
                 const current = new Date(quarterDetails.startDate);
@@ -220,7 +223,8 @@
                         date: new Date(current),
                         dateStr,
                         isWeekend,
-                        isPast: currentStartOfDay < startOfToday,
+                        // 'isPast' se basa en la fecha de HOY
+                        isPast: currentStartOfDay < startOfToday, 
                         isToday: dateStr === todayStr,
                     });
 
@@ -230,6 +234,22 @@
             }, [quarterDetails, startOfToday, today]);
 
             const quarterDays = useMemo(() => getQuarterDays(), [getQuarterDays]);
+
+            // --- Lógica de Navegación ---
+            const navigateQuarter = useCallback((direction) => {
+                setDateInView(prevDate => {
+                    const newDate = new Date(prevDate);
+                    // Mueve la fecha 3 meses (adelante o atrás)
+                    newDate.setMonth(newDate.getMonth() + (3 * direction));
+                    return newDate;
+                });
+            }, []);
+            
+            const isViewingCurrentQuarter = useMemo(() => {
+                const currentQ = getQuarterDetails(today);
+                const viewingQ = quarterDetails;
+                return currentQ.id === viewingQ.id && currentQ.startYear === viewingQ.startYear;
+            }, [quarterDetails, today]);
 
             // --- Cálculo de Estadísticas (Uso de useMemo para optimización) ---
             const stats = useMemo(() => {
@@ -241,9 +261,12 @@
                 quarterDays.forEach(day => {
                     const isExcluded = holidays.includes(day.dateStr) || vacations.includes(day.dateStr);
 
+                    // Solo contamos días hábiles del trimestre VISTO
                     if (!day.isWeekend && !isExcluded) { 
                         totalWorkingDays++;
 
+                        // 'elapsedWorkingDays' y 'attendedDays' solo se cuentan si el día ha pasado, 
+                        // pero la meta y los porcentajes se basan en el trimestre VISTO.
                         if (day.isPast || day.isToday) {
                             elapsedWorkingDays++;
                             const status = attendance[day.dateStr];
@@ -271,7 +294,8 @@
                 if (requiredToMeetTarget <= 0) {
                     neededPercentageRemaining = 0; 
                 }
-
+                
+                // La proyección solo es relevante si estamos viendo el trimestre actual
                 const projectedAttendance = ((attendedDays + daysRemainingInQuarter) / totalWorkingDays) * 100;
                 const willMeetTarget = (attendedDays + daysRemainingInQuarter) >= targetDays;
 
@@ -293,8 +317,18 @@
             // --- Funciones de manipulación de datos (LOCAlSTORAGE) ---
 
             // Manejar el registro de asistencia (Attended, Not_Attended)
-            // Lógica de triple clic: None -> Attended -> Not_Attended -> None
             const updateAttendanceStatus = (dateStr) => {
+                // Solo se permite actualizar si se está viendo el trimestre actual o si es un día pasado/presente en cualquier trimestre.
+                const dayToUpdate = quarterDays.find(d => d.dateStr === dateStr);
+                
+                if (!dayToUpdate) return; // No se encontró el día
+
+                // Si el día es futuro y no es el trimestre actual, prohibir la edición
+                if (!dayToUpdate.isPast && !dayToUpdate.isToday && !isViewingCurrentQuarter) {
+                    alert('No se puede editar la asistencia en trimestres futuros o históricos (a menos que sean días pasados en el trimestre histórico).');
+                    return;
+                }
+
                 setAttendance(prevAttendance => {
                     const newAttendance = { ...prevAttendance };
                     const currentStatus = prevAttendance[dateStr];
@@ -316,11 +350,16 @@
                     }
                     return newAttendance;
                 });
-                // La persistencia se maneja en el useEffect
             };
             
             // Guardar feriados o vacaciones
             const saveConfig = (key, dates) => {
+                // Las configuraciones (feriados/vacaciones) solo se pueden guardar si se está viendo el trimestre actual
+                if (!isViewingCurrentQuarter) {
+                    alert('Solo se pueden agregar feriados/vacaciones en el trimestre actual para evitar inconsistencias históricas.');
+                    return;
+                }
+                
                 const sortedDates = dates
                     .filter(d => d && d.trim().match(/^\d{4}-\d{2}-\d{2}$/))
                     .sort();
@@ -337,34 +376,74 @@
                 setError('');
             };
 
+            // --- Componente de Navegación de Trimestre ---
+            const QuarterNavigator = ({ quarterDetails, navigateQuarter, setDateInView, isViewingCurrentQuarter }) => (
+                <div className="flex items-center justify-between p-3 rounded-xl shadow-inner border border-blue-800" style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}}>
+                    <button
+                        onClick={() => navigateQuarter(-1)}
+                        className="p-2 rounded-full bg-orange-500 text-white hover:bg-orange-600 transition duration-150 shadow-lg flex items-center justify-center w-8 h-8"
+                        title="Trimestre Anterior"
+                    >
+                        &lt;
+                    </button>
+                    
+                    <div className="text-center">
+                        <h2 className="text-xl font-medium text-orange-400">
+                            {quarterDetails.name} ({quarterDetails.startYear} - {quarterDetails.endYear})
+                        </h2>
+                        {!isViewingCurrentQuarter && (
+                            <button
+                                onClick={() => setDateInView(new Date())}
+                                className="mt-1 text-xs font-semibold text-green-400 hover:text-green-300 transition duration-150 underline"
+                            >
+                                Volver al Trimestre Actual
+                            </button>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={() => navigateQuarter(1)}
+                        className="p-2 rounded-full bg-orange-500 text-white hover:bg-orange-600 transition duration-150 shadow-lg flex items-center justify-center w-8 h-8"
+                        title="Trimestre Siguiente"
+                    >
+                        &gt;
+                    </button>
+                </div>
+            );
+            
             // --- Componente de Entrada de Fechas Mejorado ---
-            const DateInputList = ({ title, dates, setDates, saveKey }) => {
+            const DateInputList = ({ title, dates, saveKey, isViewingCurrentQuarter, saveConfig }) => {
                 const [newDate, setNewDate] = useState('');
                 const currentDates = saveKey === 'holidays' ? holidays : vacations;
 
                 const handleAddDate = () => {
-                    if (newDate && !currentDates.includes(newDate)) {
+                    if (isViewingCurrentQuarter && newDate && !currentDates.includes(newDate)) {
                         const updatedDates = [...currentDates, newDate].sort();
-                        // Actualizar el estado temporal y persistir
-                        if (saveKey === 'holidays') setHolidays(updatedDates);
-                        if (saveKey === 'vacations') setVacations(updatedDates);
                         setNewDate(''); 
                         saveConfig(saveKey, updatedDates);
                     }
                 };
 
                 const handleRemoveDate = (dateToRemove) => {
-                    const updatedDates = currentDates.filter(d => d !== dateToRemove);
-                    // Actualizar el estado temporal y persistir
-                    if (saveKey === 'holidays') setHolidays(updatedDates);
-                    if (saveKey === 'vacations') setVacations(updatedDates);
-                    saveConfig(saveKey, updatedDates);
+                    if (isViewingCurrentQuarter) {
+                        const updatedDates = currentDates.filter(d => d !== dateToRemove);
+                        saveConfig(saveKey, updatedDates);
+                    }
                 };
+                
+                const inputDisabled = !isViewingCurrentQuarter;
 
 
                 return (
-                    <div className="space-y-3 p-4 rounded-xl shadow-inner border border-blue-800" style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}}>
+                    <div className={`space-y-3 p-4 rounded-xl shadow-inner border border-blue-800 ${inputDisabled ? 'opacity-60' : ''}`} style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}}>
                         <h3 className="text-lg font-semibold text-white">{title}</h3>
+
+                        {/* Aviso de sólo edición del trimestre actual */}
+                        {inputDisabled && (
+                            <p className="text-sm font-medium text-red-300">
+                                La configuración solo se puede editar en el trimestre actual.
+                            </p>
+                        )}
 
                         {/* Entrada de Nueva Fecha */}
                         <div className="flex space-x-2">
@@ -374,10 +453,11 @@
                                 onChange={(e) => setNewDate(e.target.value)}
                                 className="flex-grow p-2 border text-white border-blue-800 rounded-lg focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
                                 style={{backgroundColor: MIDNIGHT_BLUE}}
+                                disabled={inputDisabled}
                             />
                             <button
                                 onClick={handleAddDate}
-                                disabled={!newDate || currentDates.includes(newDate)}
+                                disabled={!newDate || currentDates.includes(newDate) || inputDisabled}
                                 className="py-2 px-4 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 transition duration-150 disabled:bg-orange-300 disabled:cursor-not-allowed"
                             >
                                 Añadir
@@ -391,8 +471,9 @@
                                     <span className="px-3 py-1 font-mono text-white">{dateStr}</span>
                                     <button
                                         onClick={() => handleRemoveDate(dateStr)}
-                                        className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 hover:bg-orange-200 ml-1 transition duration-150 flex items-center justify-center"
+                                        className={`w-6 h-6 rounded-full bg-orange-100 text-orange-600 ml-1 transition duration-150 flex items-center justify-center ${inputDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-200'}`}
                                         title="Eliminar fecha"
+                                        disabled={inputDisabled}
                                     >
                                         ❌
                                     </button>
@@ -427,8 +508,11 @@
             // Lógica para el mensaje de Proyección revisada
             let projectionMessage = null;
             let projectionStyle = 'text-gray-100'; 
-
-            if (stats.elapsedWorkingDays > 0) {
+            
+            if (!isViewingCurrentQuarter) {
+                projectionMessage = 'Estás viendo un trimestre histórico. Las estadísticas de "Asistencia Actual" y "Días Asistidos" reflejan el registro completo de este período.';
+                projectionStyle = 'bg-blue-500 text-white shadow-lg';
+            } else if (stats.elapsedWorkingDays > 0) {
                 if (stats.attendedDays >= stats.targetDays) {
                     projectionMessage = '¡Felicidades! Ya superaste la meta del 50% de asistencia. ¡Sigue así!';
                     projectionStyle = 'bg-green-600 text-white shadow-lg';
@@ -461,23 +545,25 @@
                                 <FlexTrackerLogo />
                                 <h1 className="text-3xl font-bold text-white">Flex Tracker</h1>
                             </div>
-                            <h2 className="text-xl font-medium text-orange-400">
-                                {quarterDetails.name} ({quarterDetails.startYear} - {quarterDetails.endYear})
-                            </h2>
-                            <p className="text-sm text-gray-300">
-                                Total de días hábiles: <span className="font-semibold">{stats.totalWorkingDays}</span>
-                            </p>
                         </header>
+                        
+                        {/* Navegador de Trimestres */}
+                        <QuarterNavigator 
+                            quarterDetails={quarterDetails} 
+                            navigateQuarter={navigateQuarter}
+                            setDateInView={setDateInView}
+                            isViewingCurrentQuarter={isViewingCurrentQuarter}
+                        />
 
                         {/* Resumen y Métricas */}
                         <div className="grid grid-cols-2 gap-3 p-3 rounded-xl shadow-inner border border-blue-800" style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}}>
                             <MetricCard title="Días Asistidos" value={stats.attendedDays} color="text-green-500" MIDNIGHT_BLUE_DARKER={MIDNIGHT_BLUE_DARKER} />
                             <MetricCard title="Días Requeridos (50%)" value={stats.targetDays} color="text-yellow-400" MIDNIGHT_BLUE_DARKER={MIDNIGHT_BLUE_DARKER} />
                             <MetricCard title="Asistencia Actual" value={`${stats.currentPercentage}%`} color={getPercentageColor(stats.currentPercentage)} MIDNIGHT_BLUE_DARKER={MIDNIGHT_BLUE_DARKER} />
-                            <MetricCard title="Días Hábiles Transcurridos" value={stats.elapsedWorkingDays} color="text-orange-400" MIDNIGHT_BLUE_DARKER={MIDNIGHT_BLUE_DARKER} />
+                            <MetricCard title="Días Hábiles Trimestre" value={stats.totalWorkingDays} color="text-orange-400" MIDNIGHT_BLUE_DARKER={MIDNIGHT_BLUE_DARKER} />
                         </div>
 
-                        {/* Mensaje de Proyección */}
+                        {/* Mensaje de Proyección/Estado */}
                         <div className={`p-3 rounded-xl text-center font-medium ${projectionStyle}`} style={!projectionStyle.includes('bg-') ? {backgroundColor: MIDNIGHT_BLUE_LIGHTER} : {}}>
                             {projectionMessage}
                         </div>
@@ -488,14 +574,16 @@
                             <DateInputList 
                                 title="Configurar Feriados (Días NO Laborables)" 
                                 dates={holidays} 
-                                setDates={setHolidays} 
                                 saveKey="holidays" 
+                                isViewingCurrentQuarter={isViewingCurrentQuarter}
+                                saveConfig={saveConfig}
                             />
                             <DateInputList 
                                 title="Configurar Vacaciones (Días Propios)" 
                                 dates={vacations} 
-                                setDates={setVacations} 
                                 saveKey="vacations" 
+                                isViewingCurrentQuarter={isViewingCurrentQuarter}
+                                saveConfig={saveConfig}
                             />
                         </div>
 
@@ -517,7 +605,7 @@
 
                         {/* Pie de página con aviso de almacenamiento local */}
                         <footer className="text-center text-xs text-gray-500 pt-4 border-t border-blue-800">
-                            Datos guardados automáticamente en el **almacenamiento local (localStorage)** de tu iPhone. Si borras los datos de Safari, los perderás.
+                            Datos guardados automáticamente en el **almacenamiento local (localStorage)** de tu dispositivo, con una clave única por trimestre.
                         </footer>
                     </div>
                 </div>
@@ -582,7 +670,7 @@
                 <div className="space-y-8">
                     {Object.values(months).map((monthData, index) => (
                         <MonthCalendar 
-                            key={index} 
+                            key={monthData.monthName} // Usar el nombre del mes/año como clave
                             monthData={monthData}
                             attendance={attendance}
                             holidays={holidays}
@@ -599,8 +687,8 @@
 
         // Vista de un solo mes
         const MonthCalendar = ({ monthData, attendance, holidays, vacations, updateAttendanceStatus, MIDNIGHT_BLUE_LIGHTER, MIDNIGHT_BLUE_DARKER, MIDNIGHT_BLUE }) => {
-            // CORREGIDO: Eliminada la duplicación de 'Jue' (Jueves) para evitar la advertencia de clave duplicada de React.
-            // Ahora solo hay 7 días para el grid de 7 columnas.
+            // Días de la semana para el encabezado del calendario
+            // CORREGIDO: Arreglo de 7 días únicos
             const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
             const initialOffset = monthData.startDayOfWeek;
@@ -612,7 +700,7 @@
                     
                     {/* Encabezados de Días de la Semana */}
                     <div className="grid grid-cols-7 gap-1 text-center font-semibold text-xs text-gray-400 mb-1">
-                        {/* Se utiliza el nombre del día como clave, ahora son únicos. */}
+                        {/* Se utiliza el nombre del día como clave */}
                         {daysOfWeek.map(day => <div key={day}>{day}</div>)}
                     </div>
 
@@ -649,8 +737,10 @@
             const isWorkingDay = !day.isWeekend && !holidays.includes(dateStr) && !vacations.includes(dateStr);
             const isExcludedDay = !isWorkingDay && (holidays.includes(dateStr) || vacations.includes(dateStr));
             
-            const isDisabled = day.isWeekend || isExcludedDay; 
-            
+            // Los días excluidos o pasados que no fueron registrados no se pueden editar.
+            // PERO: Si estamos viendo un trimestre histórico, permitimos la edición para que el usuario pueda corregir el pasado.
+            const isEditable = isWorkingDay; 
+
             let cellClasses = "h-10 flex items-center justify-center rounded-lg text-sm font-medium transition duration-150 cursor-pointer p-0.5 relative";
             let statusIcon = null;
             let cellStyle = {};
@@ -677,8 +767,11 @@
                 cellClasses += " text-white border border-blue-800 hover:opacity-80";
             }
             
-            if (isDisabled) {
-                cellClasses += " opacity-50 cursor-not-allowed"; 
+            // Si no es un día editable, la opacidad baja y el cursor cambia
+            if (!isEditable) {
+                 cellClasses += " opacity-50 cursor-not-allowed"; 
+            } else {
+                cellClasses += " cursor-pointer";
             }
 
             // 2. Título (Tooltip)
@@ -695,22 +788,19 @@
 
             // 3. Manejo de Clic (Triple toque)
             const handleCellClick = () => {
-                if (isDisabled) return;
-
+                if (!isEditable) return;
+                
                 // Solo cambia el estado si es un día hábil (no fin de semana, feriado o vacación)
                 if (isWorkingDay) {
                     updateAttendanceStatus(dateStr);
                 }
             };
             
-            // Eliminamos el onContextMenu (clic derecho)
-
             return (
                 <div 
                     className={cellClasses} 
                     title={title}
                     onClick={handleCellClick}
-                    // onContextMenu={handleContextMenu} <--- Eliminado
                     style={cellStyle}
                 >
                     {/* Mostrar el número del día */}
