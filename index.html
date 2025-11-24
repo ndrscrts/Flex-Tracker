@@ -42,7 +42,6 @@
                 if (serializedState === null) {
                     return defaultValue;
                 }
-                // Firestore guardaba las fechas como YYYY-MM-DD strings, por lo que JSON.parse está bien
                 return JSON.parse(serializedState);
             } catch (err) {
                 console.error("Error loading state from localStorage:", key, err);
@@ -294,15 +293,26 @@
             // --- Funciones de manipulación de datos (LOCAlSTORAGE) ---
 
             // Manejar el registro de asistencia (Attended, Not_Attended)
-            const updateAttendanceStatus = (dateStr, status) => {
+            // Lógica de triple clic: None -> Attended -> Not_Attended -> None
+            const updateAttendanceStatus = (dateStr) => {
                 setAttendance(prevAttendance => {
                     const newAttendance = { ...prevAttendance };
                     const currentStatus = prevAttendance[dateStr];
+                    
+                    let nextStatus;
 
-                    if (status === 'None' || currentStatus === status) {
-                        delete newAttendance[dateStr]; // Eliminar el registro
+                    if (currentStatus === 'Attended') {
+                        nextStatus = 'Not_Attended'; // Clic 2: De Asistido a No Asistido
+                    } else if (currentStatus === 'Not_Attended') {
+                        nextStatus = 'None'; // Clic 3: De No Asistido a Pendiente (eliminar)
+                    } else { // 'None' o undefined
+                        nextStatus = 'Attended'; // Clic 1: De Pendiente a Asistido
+                    }
+
+                    if (nextStatus === 'None') {
+                        delete newAttendance[dateStr]; // Eliminar el registro para None
                     } else {
-                        newAttendance[dateStr] = status; // Establecer nuevo estado
+                        newAttendance[dateStr] = nextStatus; // Establecer el nuevo estado
                     }
                     return newAttendance;
                 });
@@ -525,14 +535,14 @@
         // Componente de Leyenda del Calendario
         const CalendarLegend = ({ MIDNIGHT_BLUE_LIGHTER, MIDNIGHT_BLUE_DARKER }) => (
             <div className="p-3 rounded-xl shadow-sm border border-blue-800" style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}}>
-                <h4 className="text-sm font-semibold mb-2 text-white">Leyenda</h4>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                    <LegendItem color="bg-green-500" text="Asistido (Click)" />
-                    <LegendItem color="bg-red-500" text="No Asistido (Click derecho)" />
+                <h4 className="text-sm font-semibold mb-2 text-white">Leyenda de Interacción (Toques)</h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                    <LegendItem color="bg-green-500" text="1er Toque: Asistido" />
+                    <LegendItem color="bg-red-500" text="2do Toque: No Asistido" />
                     <LegendItem color={`border-2 border-orange-400`} style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}} text="Hoy" />
                     <LegendItem color="bg-yellow-500" text="Vacación / Feriado" />
                     <LegendItem color="" style={{backgroundColor: MIDNIGHT_BLUE_LIGHTER}} text="Fin de Semana" />
-                    <LegendItem color={`border border-blue-800`} style={{backgroundColor: MIDNIGHT_BLUE_DARKER}} text="Pendiente" />
+                    <LegendItem color={`border border-blue-800`} style={{backgroundColor: MIDNIGHT_BLUE_DARKER}} text="3er Toque: Pendiente" />
                 </div>
             </div>
         );
@@ -589,7 +599,7 @@
 
         // Vista de un solo mes
         const MonthCalendar = ({ monthData, attendance, holidays, vacations, updateAttendanceStatus, MIDNIGHT_BLUE_LIGHTER, MIDNIGHT_BLUE_DARKER, MIDNIGHT_BLUE }) => {
-            const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+            const daysOfWeek = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Jue', 'Sáb'];
 
             const initialOffset = monthData.startDayOfWeek;
             const calendarCells = Array(initialOffset).fill(null).concat(monthData.days);
@@ -636,7 +646,7 @@
             const isWorkingDay = !day.isWeekend && !holidays.includes(dateStr) && !vacations.includes(dateStr);
             const isExcludedDay = !isWorkingDay && (holidays.includes(dateStr) || vacations.includes(dateStr));
             
-            const isDisabled = day.isWeekend; 
+            const isDisabled = day.isWeekend || isExcludedDay; 
             
             let cellClasses = "h-10 flex items-center justify-center rounded-lg text-sm font-medium transition duration-150 cursor-pointer p-0.5 relative";
             let statusIcon = null;
@@ -648,7 +658,8 @@
                 cellStyle.backgroundColor = MIDNIGHT_BLUE_LIGHTER;
                 cellClasses += " text-gray-400 cursor-not-allowed";
             } else if (holidays.includes(dateStr) || vacations.includes(dateStr)) {
-                cellClasses += " bg-yellow-500 text-blue-950 hover:bg-yellow-400 border border-yellow-400";
+                // Feriados y Vacaciones usan el mismo estilo, no se pueden marcar con asistencia/falta
+                cellClasses += " bg-yellow-500 text-blue-950 border border-yellow-400 cursor-not-allowed";
             } else if (currentStatus === 'Attended') {
                 cellClasses += " bg-green-500 text-white shadow-md hover:bg-green-600";
                 statusIcon = '✅'; 
@@ -679,36 +690,24 @@
             else if (!day.isWeekend && !isExcludedDay) title += " (Pendiente)";
 
 
-            // 3. Manejo de Clic 
+            // 3. Manejo de Clic (Triple toque)
             const handleCellClick = () => {
                 if (isDisabled) return;
 
+                // Solo cambia el estado si es un día hábil (no fin de semana, feriado o vacación)
                 if (isWorkingDay) {
-                    // Alternar: Attended <-> None
-                    const newStatus = currentStatus === 'Attended' ? 'None' : 'Attended';
-                    updateAttendanceStatus(dateStr, newStatus);
-                } else if (isExcludedDay && currentStatus !== 'None') {
-                    updateAttendanceStatus(dateStr, 'None'); 
+                    updateAttendanceStatus(dateStr);
                 }
             };
             
-            // Usar onContextMenu para ofrecer la opción de 'No Asistido'
-            const handleContextMenu = (e) => {
-                e.preventDefault();
-                if (isDisabled || !isWorkingDay) return;
-
-                // Si es un día hábil, alternar: Not_Attended <-> None
-                const newStatus = currentStatus === 'Not_Attended' ? 'None' : 'Not_Attended';
-                updateAttendanceStatus(dateStr, newStatus);
-            };
-
+            // Eliminamos el onContextMenu (clic derecho)
 
             return (
                 <div 
                     className={cellClasses} 
                     title={title}
                     onClick={handleCellClick}
-                    onContextMenu={handleContextMenu}
+                    // onContextMenu={handleContextMenu} <--- Eliminado
                     style={cellStyle}
                 >
                     {/* Mostrar el número del día */}
